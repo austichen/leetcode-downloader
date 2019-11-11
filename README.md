@@ -19,6 +19,7 @@ cp config.default.json config.json
 ### Install dependencies
 ```
 pip install requests
+pip install selenium
 ```
 
 ### Run script

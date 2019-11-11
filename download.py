@@ -5,13 +5,25 @@ import getpass
 import requests
 import time
 
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+
 leetcode_base_url = 'https://leetcode.com'
 login_url = leetcode_base_url + '/accounts/login'
 submissions_url = leetcode_base_url + '/api/submissions/'
+csrftoken = ''
+
+chrome_options = Options()
+chrome_options.add_argument("--headless")  
+chrome_options.add_argument('--disable-gpu')  # apparently necessary for headless
 
 def login(username, password):
     session = requests.Session()
     session.get(login_url)
+    global csrftoken
     csrftoken = session.cookies['csrftoken']
 
     headers = {
@@ -29,6 +41,30 @@ def login(username, password):
 
     return session
 
+def loginDriver(driver, username, password):
+    print('Logging in...', flush=True)
+    driver.get(login_url)
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-cy="sign-in-btn"]'))
+    )
+    WebDriverWait(driver, 10).until(
+        EC.invisibility_of_element_located((By.CSS_SELECTOR, 'div#initial-loading'))
+    )
+    WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-cy="sign-in-btn"]'))
+    )
+    email_field = driver.find_element_by_css_selector('input[name="login"]')
+    password_field = driver.find_element_by_css_selector('input[name="password"]')
+    submit_button = driver.find_element_by_css_selector('button[data-cy="sign-in-btn"]')
+
+    email_field.send_keys(username)
+    password_field.send_keys(password)
+    submit_button.click()
+
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, '#home-app'))
+    )
+    print('Login successful', flush=True)
 
 def getAllSubmissions(session):
     print('Fetching all successful submissions...', flush=True)
@@ -42,9 +78,9 @@ def getAllSubmissions(session):
     page = 0
     res_per_page = 20
     all_problems = []
+
     while True:
         offset = page * res_per_page
-        print(page)
         response = session.get(submissions_url + '?offset=' + str(offset) + '&limit=' + str(res_per_page))
         res_json = response.json()
         problems = res_json['submissions_dump']
@@ -99,14 +135,17 @@ def addNumberingToTitles(submissions):
                 numTimesSeen[question][language] = 1
     print('Numbering completed', flush=True)
 
-def getRuntimeSummary(runtime):
-    return 'Runtime: ' + runtime + '\n'
+def getRuntimeSummary(runtime, runtime_percentile):
+    summary = 'Runtime: ' + runtime
+    if runtime_percentile:
+        summary += ' (beats ' + runtime_percentile + '% of submissions)'
+    return summary + '\n'
 
 def getMemorySummary(memory):
     return 'Memory: ' + memory + '\n'
             
 
-def createCodeFilesFromSubmissions(submissions, output_directory):
+def createCodeFilesFromSubmissions(submissions, output_directory, chromedriver_path, username, password):
     print('Creating files...', flush=True)
     extensions = {
         'bash': 'sh',
@@ -147,6 +186,7 @@ def createCodeFilesFromSubmissions(submissions, output_directory):
     numSubmissions = len(submissions)
     numFilesCreated = 0
     numFilesSkipped = 0
+    driver = None
     
     for i in range(len(submissions)):
         sub = submissions[i]
@@ -168,7 +208,24 @@ def createCodeFilesFromSubmissions(submissions, output_directory):
             numFilesSkipped += 1
             print('Skipping ' + file_name + ' -- file already exists', flush=True)
             continue
-        runtime_summary = comment_char[language] + ' ' + getRuntimeSummary(runtime)
+
+        if chromedriver_path and not driver:
+            print('Using chromedriver')
+            driver = webdriver.Chrome(chromedriver_path, options=chrome_options)
+            loginDriver(driver, username, password)
+        
+        runtime_percentile = None
+        if driver:
+            print('Getting runtime percentile for ' + sub['question'] + '...')
+            driver.get(leetcode_base_url + sub['link'])
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, '.ace_line_group'))
+            )
+            try:
+                runtime_percentile = re.findall("\d+\.\d+", driver.find_element_by_css_selector('#runtime_detail_plot_placeholder > div.jquery-flot-comment > div > div').text)[0]
+            except:
+                pass
+        runtime_summary = comment_char[language] + ' ' + getRuntimeSummary(runtime, runtime_percentile)
         memory_summary = comment_char[language] + ' ' + getMemorySummary(memory) + '\n'
         f = open(os.path.join(output_directory, language, file_name), 'w+', encoding='utf-8')
         f.write(runtime_summary)
@@ -184,11 +241,15 @@ def main():
         config = json.load(json_data_file)
     username = config['leetcode']['username']
     output_directory = config['output_directory_path']
+    try:
+        chromedriver_path = config['chromedriver_path']
+    except:
+        chromedriver_path = None
     password = getpass.getpass(prompt='Leetcode password: ')
 
     session = login(username, password)
     all_submissions_chronological = getAllSubmissions(session)
-    createCodeFilesFromSubmissions(all_submissions_chronological, output_directory)
+    createCodeFilesFromSubmissions(all_submissions_chronological, output_directory, chromedriver_path, username, password)
     print('Success! Exiting program', flush=True)
 
 
