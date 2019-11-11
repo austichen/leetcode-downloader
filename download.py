@@ -16,7 +16,7 @@ chrome_options.add_argument("--headless")
 chrome_options.add_argument('--disable-gpu')  # apparently necessary for headless
 
 def login(driver, username, password):
-    print('Logging in...')
+    print('Logging in...', flush=True)
     driver.get(login_url)
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-cy="sign-in-btn"]'))
@@ -38,11 +38,11 @@ def login(driver, username, password):
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, '#submission-list-app'))
     )
-    print('Login successful')
+    print('Login successful', flush=True)
 
 
 def getAllSubmissions(driver):
-    print('Fetching all successful submissions...')
+    print('Fetching all successful submissions...', flush=True)
     cached_submissions = []
     if os.path.exists('ez_cache_xD.json') and os.path.isfile('ez_cache_xD.json'):
         with open('ez_cache_xD.json') as json_data_file:
@@ -78,7 +78,7 @@ def getAllSubmissions(driver):
                     'id_number': id_number
                 }
                 new_submissions.append(submission)
-                print('Retrieved submission for ' + question)
+                print('Retrieved submission for ' + question, flush=True)
         if got_all_new_submissions:
             break
         try:
@@ -94,11 +94,11 @@ def getAllSubmissions(driver):
     with open('ez_cache_xD.json', 'w+') as outfile:
         json.dump(cache, outfile)
 
-    print('Fetched ' + str(len(new_submissions)) + ' new submissions, retrieved ' + str(len(cached_submissions)) + ' submissions from cache')
+    print('Fetched ' + str(len(new_submissions)) + ' new submissions, retrieved ' + str(len(cached_submissions)) + ' submissions from cache', flush=True)
     return submissions
 
 def addNumberingToTitles(submissions):
-    print('Numbering duplicate submissions...')
+    print('Numbering duplicate submissions...', flush=True)
     numTimesSeen = {}
     for i in range(len(submissions)):
         sub = submissions[i]
@@ -112,7 +112,7 @@ def addNumberingToTitles(submissions):
                 numTimesSeen[question] = {}
             if language not in numTimesSeen[question]:
                 numTimesSeen[question][language] = 1
-    print('Numbering completed')
+    print('Numbering completed', flush=True)
 
 def getRuntimeSummary(driver):
     runtime = driver.find_element_by_css_selector('#result_runtime').text
@@ -125,7 +125,7 @@ def getMemorySummary(driver):
             
 
 def createCodeFilesFromSubmissions(driver, submissions, output_directory):
-    print('Creating files...')
+    print('Creating files...', flush=True)
     extensions = {
         'python3': 'py',
         'python': 'py',
@@ -145,10 +145,12 @@ def createCodeFilesFromSubmissions(driver, submissions, output_directory):
 
     if not os.path.exists(output_directory):
         os.mkdir(output_directory)
-        print('Created output directory')
+        print('Created output directory', flush=True)
 
     addNumberingToTitles(submissions)
     numSubmissions = len(submissions)
+    numFilesCreated = 0
+    numFilesSkipped = 0
     
     for i in range(len(submissions)):
         sub = submissions[i]
@@ -164,7 +166,8 @@ def createCodeFilesFromSubmissions(driver, submissions, output_directory):
         full_path = os.path.join(joined_output_directory, file_name)
 
         if os.path.exists(full_path) and os.path.isfile(full_path):
-            print('Skipping ' + file_name + ' -- file already exists')
+            numFilesSkipped += 1
+            print('Skipping ' + file_name + ' -- file already exists', flush=True)
             continue
 
         driver.get(sub['link'])
@@ -185,25 +188,26 @@ def createCodeFilesFromSubmissions(driver, submissions, output_directory):
         for line in code_lines:
             f.write(line.text + '\n')
         f.close()
-        print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')')
-    print('Finished creating files')
+        numFilesCreated += 1
+        print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')', flush=True)
+    print('Created ' + str(numFilesCreated) + ' new files, skipped ' + str(numFilesSkipped) + ' files', flush=True)
 
 def main():
-    print('Loading config')
+    print('Loading config', flush=True)
     with open('config.json') as json_data_file:
         config = json.load(json_data_file)
     username = config['leetcode']['username']
     password = config['leetcode']['password']
     output_directory = config['output_directory_path']
 
-    print('Starting webdriver...')
+    print('Starting webdriver...', flush=True)
     driver = webdriver.Chrome(config['chromedriver_path'], options=chrome_options)
     try:
         login(driver, username, password)
         all_submissions_chronological = None
         all_submissions_chronological = getAllSubmissions(driver)
         createCodeFilesFromSubmissions(driver, all_submissions_chronological, output_directory)
-        print('Success! Exiting program')
+        print('Success! Exiting program', flush=True)
     finally:
         driver.close()
 
