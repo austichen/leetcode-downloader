@@ -1,8 +1,6 @@
 {
     "leetcode": {
-        "username": "youremail@email.com",
-        "password": "password123"
+        "username": "youremail@email.com"
     },
-    "output_directory_path": "submission_files",
-    "chromedriver_path": "chromedriver.exe"
+    "output_directory_path": "submission_files"
 }

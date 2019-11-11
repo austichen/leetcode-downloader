@@ -1,47 +1,36 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-
 import os
 import re
 import json
+import getpass
+import requests
+import time
 
 leetcode_base_url = 'https://leetcode.com'
-login_url = leetcode_base_url + '/accounts/login/?next=/submissions/#/1'
+login_url = leetcode_base_url + '/accounts/login'
+submissions_url = leetcode_base_url + '/api/submissions/'
 
-chrome_options = Options()  
-chrome_options.add_argument("--headless")  
-chrome_options.add_argument('--disable-gpu')  # apparently necessary for headless
+def login(username, password):
+    session = requests.Session()
+    session.get(login_url)
+    csrftoken = session.cookies['csrftoken']
 
-def login(driver, username, password):
-    print('Logging in...', flush=True)
-    driver.get(login_url)
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-cy="sign-in-btn"]'))
-    )
-    WebDriverWait(driver, 10).until(
-        EC.invisibility_of_element_located((By.CSS_SELECTOR, 'div#initial-loading'))
-    )
-    WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-cy="sign-in-btn"]'))
-    )
-    email_field = driver.find_element_by_css_selector('input[name="login"]')
-    password_field = driver.find_element_by_css_selector('input[name="password"]')
-    submit_button = driver.find_element_by_css_selector('button[data-cy="sign-in-btn"]')
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": login_url
+    }
 
-    email_field.send_keys(username)
-    password_field.send_keys(password)
-    submit_button.click()
+    payload = {
+        "csrfmiddlewaretoken": csrftoken,
+        "login": username,
+        "password": password
+    }
 
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, '#submission-list-app'))
-    )
-    print('Login successful', flush=True)
+    session.post(login_url, data=payload, headers=headers)
+
+    return session
 
 
-def getAllSubmissions(driver):
+def getAllSubmissions(session):
     print('Fetching all successful submissions...', flush=True)
     cached_submissions = []
     if os.path.exists('ez_cache_xD.json') and os.path.isfile('ez_cache_xD.json'):
@@ -50,42 +39,38 @@ def getAllSubmissions(driver):
             cached_submissions = cache['cached_submissions']
     new_submissions = []
     got_all_new_submissions = False
+    page = 0
+    res_per_page = 20
+    all_problems = []
     while True:
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'tbody > tr'))
-        )
-        submissions_html = driver.find_elements_by_css_selector('tbody > tr')
-        for sub in submissions_html:
-            children = sub.find_elements_by_css_selector('td')
-            time_submitted = children[0].text
-            question = children[1].text
-            status = children[2].text
-            runtime = children[3].text
-            language = children[4].text
-            if status == 'Accepted':
-                link = children[2].find_element_by_css_selector('a').get_attribute('href')
-                id_number = link.split('/')[-2]
-                if len(cached_submissions) and id_number == cached_submissions[-1]['id_number']:
+        offset = page * res_per_page
+        print(page)
+        response = session.get(submissions_url + '?offset=' + str(offset) + '&limit=' + str(res_per_page))
+        res_json = response.json()
+        problems = res_json['submissions_dump']
+        for problem in problems:
+            if problem['status_display'] == 'Accepted':
+                if len(cached_submissions) and problem['id'] == cached_submissions[-1]['id_number']:
                     got_all_new_submissions = True
                     break
                 submission = {
-                    'time_submitted': time_submitted,
-                    'question': question,
-                    'status': status,
-                    'runtime': runtime,
-                    'language': language,
-                    'link': link,
-                    'id_number': id_number
+                    'time_submitted': problem['timestamp'],
+                    'question': problem['title'],
+                    'status': "Accepted",
+                    'runtime': problem['runtime'],
+                    'memory': problem['memory'],
+                    'language': problem['lang'],
+                    'link': problem['url'],
+                    'id_number': problem['id'],
+                    'code': problem['code']
                 }
                 new_submissions.append(submission)
-                print('Retrieved submission for ' + question, flush=True)
-        if got_all_new_submissions:
+                print('Retrieved submission for ' + submission['question'], flush=True)
+        if got_all_new_submissions or not res_json['has_next']:
             break
-        try:
-            next_button = driver.find_element_by_css_selector('li.next > a')
-            next_button.click()
-        except:
-            break
+        page += 1
+        time.sleep(2)
+
     new_submissions.reverse()
     submissions = cached_submissions + new_submissions
     cache = {
@@ -114,33 +99,44 @@ def addNumberingToTitles(submissions):
                 numTimesSeen[question][language] = 1
     print('Numbering completed', flush=True)
 
-def getRuntimeSummary(driver):
-    runtime = driver.find_element_by_css_selector('#result_runtime').text
-    runtime_percentile = re.findall("\d+\.\d+", driver.find_element_by_css_selector('#runtime_detail_plot_placeholder > div.jquery-flot-comment > div > div').text)[0]
-    return 'Runtime: ' + runtime + ' (beats ' + runtime_percentile + '% of submissions)\n'
+def getRuntimeSummary(runtime):
+    return 'Runtime: ' + runtime + '\n'
 
-def getMemorySummary(driver):
-    memory = driver.find_element_by_css_selector('#result_memory').text
+def getMemorySummary(memory):
     return 'Memory: ' + memory + '\n'
             
 
-def createCodeFilesFromSubmissions(driver, submissions, output_directory):
+def createCodeFilesFromSubmissions(submissions, output_directory):
     print('Creating files...', flush=True)
     extensions = {
-        'python3': 'py',
-        'python': 'py',
+        'bash': 'sh',
+        'c': 'c',
+        'cpp': 'cpp',
+        'csharp': 'cs',
+        'golang': 'go',
         'java': 'java',
         'javascript': 'js',
-        'c': 'c',
-        'cpp': 'cpp'
+        'mysql': 'sql',
+        'python': 'py',
+        'python3': 'py',
+        'ruby': 'rb',
+        'scala': 'scala',
+        'swift': 'swift',
     }
     comment_char = {
-        'python3': '#',
-        'python': '#',
+        'bash': '#',
+        'c': '//',
+        'cpp': '//',
+        'csharp': '//',
+        'golang': '//',
         'java': '//',
         'javascript': '//',
-        'c': '//',
-        'cpp': '//'
+        'mysql': '#',
+        'python': '#',
+        'python3': '#',
+        'ruby': '#',
+        'scala': '//',
+        'swift': '//',
     }
 
     if not os.path.exists(output_directory):
@@ -156,6 +152,9 @@ def createCodeFilesFromSubmissions(driver, submissions, output_directory):
         sub = submissions[i]
         title = sub['question']
         language = sub['language']
+        code = sub['code']
+        runtime = sub['runtime']
+        memory = sub['memory']
         extension = extensions[language]
         joined_output_directory = os.path.join(output_directory, language)
 
@@ -169,47 +168,28 @@ def createCodeFilesFromSubmissions(driver, submissions, output_directory):
             numFilesSkipped += 1
             print('Skipping ' + file_name + ' -- file already exists', flush=True)
             continue
-
-        driver.get(sub['link'])
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '.ace_line_group'))
-        )
-        code_lines = driver.find_elements_by_css_selector('.ace_line_group')
-        runtime_summary = ''
-        memory_summary = ''
-        try:
-            runtime_summary = comment_char[language] + ' ' + getRuntimeSummary(driver)
-            memory_summary = comment_char[language] + ' ' + getMemorySummary(driver) + '\n'
-        except:
-            pass
-        f = open(os.path.join(output_directory, language, file_name), 'w+')
+        runtime_summary = comment_char[language] + ' ' + getRuntimeSummary(runtime)
+        memory_summary = comment_char[language] + ' ' + getMemorySummary(memory) + '\n'
+        f = open(os.path.join(output_directory, language, file_name), 'w+', encoding='utf-8')
         f.write(runtime_summary)
         f.write(memory_summary)
-        for line in code_lines:
-            f.write(line.text + '\n')
+        f.write(code)
         f.close()
         numFilesCreated += 1
         print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')', flush=True)
     print('Created ' + str(numFilesCreated) + ' new files, skipped ' + str(numFilesSkipped) + ' files', flush=True)
 
 def main():
-    print('Loading config', flush=True)
     with open('config.json') as json_data_file:
         config = json.load(json_data_file)
     username = config['leetcode']['username']
-    password = config['leetcode']['password']
     output_directory = config['output_directory_path']
+    password = getpass.getpass(prompt='Leetcode password: ')
 
-    print('Starting webdriver...', flush=True)
-    driver = webdriver.Chrome(config['chromedriver_path'], options=chrome_options)
-    try:
-        login(driver, username, password)
-        all_submissions_chronological = None
-        all_submissions_chronological = getAllSubmissions(driver)
-        createCodeFilesFromSubmissions(driver, all_submissions_chronological, output_directory)
-        print('Success! Exiting program', flush=True)
-    finally:
-        driver.close()
+    session = login(username, password)
+    all_submissions_chronological = getAllSubmissions(session)
+    createCodeFilesFromSubmissions(all_submissions_chronological, output_directory)
+    print('Success! Exiting program', flush=True)
 
 
 if __name__ == "__main__":
