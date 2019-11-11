@@ -31,6 +31,8 @@ python download.py
 
 Enter your password when prompted. After the script finishes, check the `output_directory_path` folder you specified, and all your successfull submissions should be there! If you re-run the script multiple times, it will only fetch the new submissions that you haven't downloaded yet.
 
+**Note**: If you're using `git bash` on windows, and the script hangs (the prompt to enter your password doesn't show up), you may need to set up an alias to your python executable. Just run this command: `alias python='winpty python.exe'` before running `python download.py`
+
 ## Extra Notes
 
 ### Runtime Percentile
@@ -55,7 +57,7 @@ class Solution:
 
 If you want to have the `runtime percentile` added, perform the following steps:
 1. Download the correct version of [`chromedriver`](https://chromedriver.chromium.org/downloads) for your computer and chrome version
-2. Move `chromedriver.exe` executable to a directory of your choice. If you want to keep it simple, move it into this folder
+2. Extract the `chromedriver.exe` executable to a directory of your choice. If you want to keep it simple, move it into this folder
 3. Add the `chromedriver_path` key to your `config.json`:
 ```
 "chromedriver_path": "path/to/chromedriver.exe"
