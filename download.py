@@ -251,8 +251,8 @@ def createCodeFilesFromSubmissions(submissions):
     createDirectory(config['output_directory_path'])
 
     numSubmissions = len(submissions)
-    numFilesCreated = 0
-    numFilesSkipped = 0
+    new_files_created = []
+    num_files_skipped = 0
     driver = None
     
     for i in range(len(submissions)):
@@ -270,7 +270,7 @@ def createCodeFilesFromSubmissions(submissions):
         file_path = os.path.join(language_folder, file_name)
 
         if os.path.exists(file_path) and os.path.isfile(file_path):
-            numFilesSkipped += 1
+            num_files_skipped += 1
             print('Skipping ' + file_name + ' -- file already exists', flush=True)
             continue
         
@@ -279,10 +279,11 @@ def createCodeFilesFromSubmissions(submissions):
         memory_summary = getMemorySummary(language, memory) + '\n'
 
         createCodeFile(os.path.join(config['output_directory_path'], language, file_name), runtime_summary, memory_summary, code)
-        numFilesCreated += 1
+        new_files_created.append(file_name)
 
         print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')', flush=True)
-    print('Created ' + str(numFilesCreated) + ' new files, skipped ' + str(numFilesSkipped) + ' files', flush=True)
+    print('Created ' + str(len(new_files_created)) + ' new files, skipped ' + str(num_files_skipped) + ' files', flush=True)
+    return new_files_created
 
 def download():
     global config
@@ -293,9 +294,26 @@ def download():
     login(config['leetcode']['username'], config['leetcode']['password'])
     all_submissions_chronological = getAllSubmissions()
     addNumberingToTitles(all_submissions_chronological)
-    createCodeFilesFromSubmissions(all_submissions_chronological)
-    print('Success! Exiting program', flush=True)
+    new_files_created = createCodeFilesFromSubmissions(all_submissions_chronological)
+    print('Successfully downloaded submissions!', flush=True)
+    return new_files_created
+
+def pushToGithub(new_files):
+    if not len(new_files):
+        print('No new files to push to Github')
+        return
+    msg = '"Added ' + str(len(new_files)) + ' new files"'
+    if len(new_files) == 1:
+        msg = '"Added new file ' + new_files[0] + '"'
+    os.chdir(config['output_directory_path'])
+    os.system('git add .')
+    os.system('git commit -m ' + msg)
+    os.system('git push origin master')
+    print('Successfully pushed files to Github!')
 
 
 if __name__ == "__main__":
-    download()
+    new_files_created = download()
+    if len(sys.argv) == 2 and sys.argv[1] == '--github':
+        pushToGithub(new_files_created)
+    print('Program finished! Exiting...')
