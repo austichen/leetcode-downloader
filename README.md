@@ -74,3 +74,25 @@ For example, if you moved `chromedriver.exe` to this folder, your `config.json` 
 ```
 
 Note: It will take significantly longer for the script to run if you enable `runtime percentile`s, but it's pretty worth
+
+### Push to Github
+
+If you connect your `output_directory_path` folder with a Github remote, you can also automatically push your submission files to your Github repo by adding the `--github` flag:
+```
+python download.py --github
+```
+
+To set this up, perform the following steps:
+
+1. Create a new repository on Github. Copy the Git URL for the new repo.
+2. Initialize your output directory with Git and set its remote to your new repository:
+```
+cd <path/to/your_output_directory>
+git init
+git remote add origin <git_url_you_copied>
+```
+3. Run the script with the `--github` tag
+```
+python download.py --github
+```
+4. If you check your Github repository, your files should now be there!
