@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import getpass
@@ -20,11 +21,32 @@ chrome_options = Options()
 chrome_options.add_argument("--headless")  
 chrome_options.add_argument('--disable-gpu')  # apparently necessary for headless
 
+session = None
+driver = None
+
+config = {}
+
+COMMENT_CHAR = {
+    'bash': '#',
+    'c': '//',
+    'cpp': '//',
+    'csharp': '//',
+    'golang': '//',
+    'java': '//',
+    'javascript': '//',
+    'mysql': '#',
+    'python': '#',
+    'python3': '#',
+    'ruby': '#',
+    'scala': '//',
+    'swift': '//',
+}
+
 def login(username, password):
-    session = requests.Session()
-    session.get(login_url)
+    leetcode_session = requests.Session()
+    leetcode_session.get(login_url)
     global csrftoken
-    csrftoken = session.cookies['csrftoken']
+    csrftoken = leetcode_session.cookies['csrftoken']
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -37,9 +59,10 @@ def login(username, password):
         "password": password
     }
 
-    session.post(login_url, data=payload, headers=headers)
+    leetcode_session.post(login_url, data=payload, headers=headers)
 
-    return session
+    global session
+    session = leetcode_session
 
 def loginDriver(driver, username, password):
     print('Logging in...', flush=True)
@@ -66,54 +89,78 @@ def loginDriver(driver, username, password):
     )
     print('Login successful', flush=True)
 
-def getAllSubmissions(session):
-    print('Fetching all successful submissions...', flush=True)
+def getCachedSubmissions():
     cached_submissions = []
     if os.path.exists('ez_cache_xD.json') and os.path.isfile('ez_cache_xD.json'):
         with open('ez_cache_xD.json') as json_data_file:
             cache = json.load(json_data_file)
             cached_submissions = cache['cached_submissions']
-    new_submissions = []
-    got_all_new_submissions = False
-    page = 0
-    res_per_page = 20
-    all_problems = []
+    return cached_submissions
 
-    while True:
-        offset = page * res_per_page
-        response = session.get(submissions_url + '?offset=' + str(offset) + '&limit=' + str(res_per_page))
-        res_json = response.json()
-        problems = res_json['submissions_dump']
-        for problem in problems:
-            if problem['status_display'] == 'Accepted':
-                if len(cached_submissions) and problem['id'] == cached_submissions[-1]['id_number']:
-                    got_all_new_submissions = True
-                    break
-                submission = {
-                    'time_submitted': problem['timestamp'],
-                    'question': problem['title'],
-                    'status': "Accepted",
-                    'runtime': problem['runtime'],
-                    'memory': problem['memory'],
-                    'language': problem['lang'],
-                    'link': problem['url'],
-                    'id_number': problem['id'],
-                    'code': problem['code']
-                }
-                new_submissions.append(submission)
-                print('Retrieved submission for ' + submission['question'], flush=True)
-        if got_all_new_submissions or not res_json['has_next']:
-            break
-        page += 1
-        time.sleep(2)
-
-    new_submissions.reverse()
-    submissions = cached_submissions + new_submissions
+def updateCachedSubmissions(submissions):
     cache = {
         "cached_submissions": submissions
     }
     with open('ez_cache_xD.json', 'w+') as outfile:
         json.dump(cache, outfile)
+
+def getSubmissionsFromApi(offset, limit):
+    response = session.get(submissions_url + '?offset=' + str(offset) + '&limit=' + str(limit))
+    res_json = response.json()
+    return res_json
+
+def getAcceptedProblemsFromJson(json):
+    if 'submissions_dump' not in json:
+        print('Login error: incorrect username/password')
+        sys.exit()
+    return list(filter(lambda p: p['status_display'] == 'Accepted', json['submissions_dump']))
+
+def isProblemCached(problem, cached_submissions):
+    return len(cached_submissions) and problem['id'] == cached_submissions[-1]['id_number']
+
+def formatProblem(problem):
+    submission = {
+        'time_submitted': problem['timestamp'],
+        'question': problem['title'],
+        'status': "Accepted",
+        'runtime': problem['runtime'],
+        'memory': problem['memory'],
+        'language': problem['lang'],
+        'link': problem['url'],
+        'id_number': problem['id'],
+        'code': problem['code']
+    }
+    return submission
+
+
+def getAllSubmissions():
+    print('Fetching all successful submissions...', flush=True)
+    cached_submissions = getCachedSubmissions()
+    new_submissions = []
+
+    got_all_new_submissions = False
+    page = 0
+    RES_PER_PAGE = 20
+
+    while True:
+        offset = page * RES_PER_PAGE
+        res_json = getSubmissionsFromApi(offset, RES_PER_PAGE)
+        accepted_problems = getAcceptedProblemsFromJson(res_json)
+        for problem in accepted_problems:
+            if isProblemCached(problem, cached_submissions):
+                got_all_new_submissions = True
+                break
+            submission = formatProblem(problem)
+            new_submissions.append(submission)
+            print('Retrieved submission for ' + submission['question'], flush=True)
+        if got_all_new_submissions or not res_json['has_next']:
+            break
+        page += 1
+        time.sleep(2) # api calls are rate limited
+
+    new_submissions.reverse() # put in chronological order
+    submissions = cached_submissions + new_submissions
+    updateCachedSubmissions(submissions)
 
     print('Fetched ' + str(len(new_submissions)) + ' new submissions, retrieved ' + str(len(cached_submissions)) + ' submissions from cache', flush=True)
     return submissions
@@ -135,19 +182,57 @@ def addNumberingToTitles(submissions):
                 numTimesSeen[question][language] = 1
     print('Numbering completed', flush=True)
 
-def getRuntimeSummary(runtime, runtime_percentile):
-    summary = 'Runtime: ' + runtime
+def createDirectory(path):
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print('Created directory ' + path, flush=True)
+
+def createCodeFile(path, runtime_summary, memory_summary, code):
+    f = open(path, 'w+', encoding='utf-8')
+    f.write(runtime_summary)
+    f.write(memory_summary)
+    f.write(code)
+    f.close()
+
+def getRuntimePercentile(question, link):
+    if 'chromedriver_path' not in config:
+        return None
+
+    global driver
+    if not driver:
+        print('Using chromedriver')
+        driver = webdriver.Chrome(config['chromedriver_path'], options=chrome_options)
+        try:
+            loginDriver(driver, config['leetcode']['username'], config['leetcode']['password'])
+        except Exception as e:
+            print(e)
+            driver.close()
+
+    runtime_percentile = None
+    print('Getting runtime percentile for ' + question + '...')
+    try:
+        driver.get(link)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '.ace_line_group'))
+        )
+        runtime_percentile = re.findall("\d+\.\d+", driver.find_element_by_css_selector('#runtime_detail_plot_placeholder > div.jquery-flot-comment > div > div').text)[0]
+    except:
+        pass
+    return runtime_percentile
+
+def getRuntimeSummary(language, runtime, runtime_percentile):
+    summary = COMMENT_CHAR[language] + ' ' + 'Runtime: ' + runtime
     if runtime_percentile:
         summary += ' (beats ' + runtime_percentile + '% of submissions)'
     return summary + '\n'
 
-def getMemorySummary(memory):
-    return 'Memory: ' + memory + '\n'
+def getMemorySummary(language, memory):
+    return COMMENT_CHAR[language] + ' ' + 'Memory: ' + memory + '\n'
             
 
-def createCodeFilesFromSubmissions(submissions, output_directory, chromedriver_path, username, password):
+def createCodeFilesFromSubmissions(submissions):
     print('Creating files...', flush=True)
-    extensions = {
+    EXTENSIONS = {
         'bash': 'sh',
         'c': 'c',
         'cpp': 'cpp',
@@ -162,27 +247,9 @@ def createCodeFilesFromSubmissions(submissions, output_directory, chromedriver_p
         'scala': 'scala',
         'swift': 'swift',
     }
-    comment_char = {
-        'bash': '#',
-        'c': '//',
-        'cpp': '//',
-        'csharp': '//',
-        'golang': '//',
-        'java': '//',
-        'javascript': '//',
-        'mysql': '#',
-        'python': '#',
-        'python3': '#',
-        'ruby': '#',
-        'scala': '//',
-        'swift': '//',
-    }
 
-    if not os.path.exists(output_directory):
-        os.mkdir(output_directory)
-        print('Created output directory', flush=True)
+    createDirectory(config['output_directory_path'])
 
-    addNumberingToTitles(submissions)
     numSubmissions = len(submissions)
     numFilesCreated = 0
     numFilesSkipped = 0
@@ -195,63 +262,40 @@ def createCodeFilesFromSubmissions(submissions, output_directory, chromedriver_p
         code = sub['code']
         runtime = sub['runtime']
         memory = sub['memory']
-        extension = extensions[language]
-        joined_output_directory = os.path.join(output_directory, language)
 
-        if not os.path.exists(joined_output_directory):
-            os.mkdir(joined_output_directory)
+        language_folder = os.path.join(config['output_directory_path'], language)
+        createDirectory(language_folder)
 
-        file_name = title + '.' + extension
-        full_path = os.path.join(joined_output_directory, file_name)
+        file_name = title + '.' + EXTENSIONS[language]
+        file_path = os.path.join(language_folder, file_name)
 
-        if os.path.exists(full_path) and os.path.isfile(full_path):
+        if os.path.exists(file_path) and os.path.isfile(file_path):
             numFilesSkipped += 1
             print('Skipping ' + file_name + ' -- file already exists', flush=True)
             continue
-
-        if chromedriver_path and not driver:
-            print('Using chromedriver')
-            driver = webdriver.Chrome(chromedriver_path, options=chrome_options)
-            loginDriver(driver, username, password)
         
-        runtime_percentile = None
-        if driver:
-            print('Getting runtime percentile for ' + sub['question'] + '...')
-            driver.get(leetcode_base_url + sub['link'])
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '.ace_line_group'))
-            )
-            try:
-                runtime_percentile = re.findall("\d+\.\d+", driver.find_element_by_css_selector('#runtime_detail_plot_placeholder > div.jquery-flot-comment > div > div').text)[0]
-            except:
-                pass
-        runtime_summary = comment_char[language] + ' ' + getRuntimeSummary(runtime, runtime_percentile)
-        memory_summary = comment_char[language] + ' ' + getMemorySummary(memory) + '\n'
-        f = open(os.path.join(output_directory, language, file_name), 'w+', encoding='utf-8')
-        f.write(runtime_summary)
-        f.write(memory_summary)
-        f.write(code)
-        f.close()
+        runtime_percentile = getRuntimePercentile(title, leetcode_base_url + sub['link'])
+        runtime_summary = getRuntimeSummary(language, runtime, runtime_percentile)
+        memory_summary = getMemorySummary(language, memory) + '\n'
+
+        createCodeFile(os.path.join(config['output_directory_path'], language, file_name), runtime_summary, memory_summary, code)
         numFilesCreated += 1
+
         print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')', flush=True)
     print('Created ' + str(numFilesCreated) + ' new files, skipped ' + str(numFilesSkipped) + ' files', flush=True)
 
-def main():
+def download():
+    global config
     with open('config.json') as json_data_file:
         config = json.load(json_data_file)
-    username = config['leetcode']['username']
-    output_directory = config['output_directory_path']
-    try:
-        chromedriver_path = config['chromedriver_path']
-    except:
-        chromedriver_path = None
-    password = getpass.getpass(prompt='Leetcode password: ')
+    config['leetcode']['password'] = getpass.getpass(prompt='Leetcode password: ')
 
-    session = login(username, password)
-    all_submissions_chronological = getAllSubmissions(session)
-    createCodeFilesFromSubmissions(all_submissions_chronological, output_directory, chromedriver_path, username, password)
+    login(config['leetcode']['username'], config['leetcode']['password'])
+    all_submissions_chronological = getAllSubmissions()
+    addNumberingToTitles(all_submissions_chronological)
+    createCodeFilesFromSubmissions(all_submissions_chronological)
     print('Success! Exiting program', flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    download()
