@@ -6,15 +6,16 @@ A simple python script to download your (successful) Leetcode submissions to you
 
 ### Download chromedriver
 - Download the correct version of [`chromedriver`](https://chromedriver.chromium.org/downloads) for your computer
-- Move `chromedriver.exe` to a directory of your choice. If you want to keep it simple, you can move it into this folder
+- Move `chromedriver.exe` to a directory of your choice. If you want to keep it simple, move it into this folder
 
 ### Create your config file
 ```
 cp config.default.json config.json
 ```
-- Replace the `username` and `password` fields with your own Leetcode login credentials
-- If you want, change the `output_directory_path` to the path you would like to output the files to (ie `D:/leetcode-solutions`, `~/Documents/leetcode-solutions`)
-- If your `chromedriver.exe` file is not in this folder, change the `chromedriver_path` to the correct path to your `chromedriver.exe` file
+- `username`: Your Leetcode username
+- `password`: Your Leetcode password
+- `output_directory_path`: The path you would like to output the files to. You can use the default value
+- `chromedriver_path`: The path to your `chromedriver.exe` file. Use the default value if you moved `chromedriver.exe` into this folder, otherwise update it with the correct path
 
 ### Install dependencies
 ```
