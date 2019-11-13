@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import json
+import subprocess
 import getpass
 import requests
 import time
@@ -283,7 +284,6 @@ def createCodeFilesFromSubmissions(submissions):
 
         print('Created file for ' + file_name + ' (' + str(i+1) + '/' + str(numSubmissions) + ')', flush=True)
     print('Created ' + str(len(new_files_created)) + ' new files, skipped ' + str(num_files_skipped) + ' files', flush=True)
-    return new_files_created
 
 def download():
     global config
@@ -294,26 +294,34 @@ def download():
     login(config['leetcode']['username'], config['leetcode']['password'])
     all_submissions_chronological = getAllSubmissions()
     addNumberingToTitles(all_submissions_chronological)
-    new_files_created = createCodeFilesFromSubmissions(all_submissions_chronological)
+    createCodeFilesFromSubmissions(all_submissions_chronological)
     print('Successfully downloaded submissions!', flush=True)
-    return new_files_created
 
-def pushToGithub(new_files):
-    if not len(new_files):
-        print('No new files to push to Github')
-        return
-    msg = '"Added ' + str(len(new_files)) + ' new files"'
-    if len(new_files) == 1:
-        msg = '"Added new file ' + new_files[0] + '"'
+def pushToGithub():
     os.chdir(config['output_directory_path'])
-    os.system('git add .')
-    os.system('git commit -m ' + msg)
-    os.system('git push origin master')
-    print('Successfully pushed files to Github!')
+    status = subprocess.check_output("git status", shell=True)
+    output_list = list(filter(lambda x: len(x) > 1, str(status).split('\\n')))
+    if output_list[-1] == 'nothing to commit, working tree clean':
+        print('No new files to commit')
+    elif output_list[-1] == 'nothing added to commit but untracked files present (use "git add" to track)':
+        new_files = output_list[4:-1]
+        msg = '"Added ' + str(len(new_files)) + ' new files"'
+        os.system('git add .')
+        os.system('git commit -m ' + msg)
+        os.system('git push origin master')
+        print('Successfully pushed files to Github!')
+    elif output_list[-1] == 'no changes added to commit (use "git add" and/or "git commit -a")':
+        msg = '"Updated existing files"'
+        os.system('git add .')
+        os.system('git commit -m ' + msg)
+        os.system('git push origin master')
+        print('Successfully pushed files to Github!')
+    else:
+        print('Unable to push files to github')
 
 
 if __name__ == "__main__":
-    new_files_created = download()
+    download()
     if len(sys.argv) == 2 and sys.argv[1] == '--github':
-        pushToGithub(new_files_created)
+        pushToGithub()
     print('Program finished! Exiting...')
